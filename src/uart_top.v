@@ -1,13 +1,15 @@
 `define KEY 
-module uart_test(
+module uart_test#(parameter size = 32)(
 	input                        clk,
 	input                        rst,
 	input                        uart_rx,
-	
-	input						 [((512 * 8) - 1):0] data_o, // 0x0 markes the end of the string, this is outputed to pc.
-	input						 data_o_trigger, // output if high;
-	output						 [((512 * 8) - 1):0] data_i, // 0x0 markes the end of the string, this is inputed from pc.
 
+	input  						 [((size * 8) - 1):0] data_o, // 0x0 markes the end of the string, this is outputed to pc.
+	input						 data_o_trigger, // output if high;
+	output reg						 data_o_ready,
+	output reg					 [((size * 8) - 1):0] data_i, // 0x0 markes the end of the string, this is inputed from pc.
+	output reg					 data_i_trigger,
+	input						 data_i_ready,
 	output                       uart_tx,
     output                       sample_clk,
     output                       [7:0] led
@@ -27,11 +29,13 @@ OSCA uut(
 );
 defparam uut.FREQ_DIV=50;//210MHz/50=4.2Hz
 
-parameter                        CLK_FRE  = 50;//MHz
-parameter                        UART_FRE = 115200;//baudrate
+localparam                       CLK_FRE  = 50;//MHz
+localparam                       UART_FRE = 115200;//baudrate
 localparam                       IDLE =  0;
 localparam                       SEND =  1;   //send 
 localparam                       RECV = 2;
+localparam                       PREIDLE = 3;
+
 reg[7:0]                         tx_data;
 reg                              tx_data_valid;
 wire                             tx_data_ready;
@@ -39,7 +43,12 @@ wire[7:0]                        rx_data;
 wire                             rx_data_valid;
 reg                              rx_data_ready;
 reg[3:0]                         state;
-reg[9:0] 						 data_o_cnt = 512;
+reg[9:0] 						 data_o_cnt = 0;
+reg[9:0] 						 data_i_cnt = 0;
+reg 							 reset_i_count;
+reg 							 reset_o_count;
+
+
 
     assign led = ~rx_data;
 
@@ -54,51 +63,65 @@ begin
 	end
 	else begin
     case(state)
-        IDLE: 
-				
-			begin
-			 	state <= RECV;
-        	end
-		RECV: begin
-			rx_data_ready <= 1'b1;
-			
-			if(rx_data_valid) begin
-				tx_data_valid <= 1'b1;
-				tx_data <= rx_data;
-			end else if(tx_data_valid & tx_data_ready) tx_data_valid <= 8'b0;
-			else  state <= SEND;
-        end
-        SEND: begin
-			
-//			if( & ) begin
-//				if()
-//				tx_data_valid <= 1'b1;
-//				tx_data <= data_o[(8 * data_o_cnt)+:8];
-//				data_o_cnt = data_o_cnt + 10'b1;
-//			end else begin
-//				
-//				state <= RECV;
-//			end
-
-			tx_data <= data_o[(8 * data_o_cnt)+:8];
-
-			if(tx_data_valid == 1'b1 && tx_data_ready == 1'b1 && data_o_cnt > 0)//Send 12 bytes data
-			begin
-				data_o_cnt <= data_o_cnt - 10'd1; //Send data counter
-			end
-			else if(tx_data_valid && tx_data_ready)//last byte sent is complete
-			begin
-				data_o_cnt <= 10'd512;
-				tx_data_valid <= 1'b0;
-				state <= IDLE;
-			end
-			else if(~tx_data_valid)
-			begin
-				tx_data_valid <= 1'b1;
-			end
-
+		PREIDLE:
+		begin
+			state <= IDLE;
 		end
-		default: state <= IDLE;
+        IDLE: 
+			begin
+				tx_data_valid <= 1'b0;
+				rx_data_ready <= 1'b0;
+				data_o_ready <= 1'b0;
+			 	if (data_o_trigger) begin
+					tx_data_valid <= 1'b1;
+					state <= SEND;
+					if (data_o_ready) begin
+					data_o_ready <= 1'b0;
+					end
+				end else if (data_i_ready) begin
+					rx_data_ready <= 1'b1;
+					state <= RECV;
+					if (data_i_trigger) begin
+						data_i_trigger <= 0;
+						data_i <= 0;
+					end
+				end
+				
+        	end
+		RECV: 
+		begin
+			if(rx_data_ready & rx_data_valid) begin
+				data_i[((data_i_cnt) * 8)+:8] <= rx_data;
+				data_i_cnt <= data_i_cnt + 10'b1;
+				tx_data <= rx_data;
+				tx_data_valid <= 1'b1;
+				if(!(rx_data ^ 8'h0D)) begin
+//					data_i <= data_i << (2 * 8);
+					data_i[(((data_i_cnt) ) * 8)+:16] <= 16'h0a0d;
+//					data_i[(0)+:16] <= 16'h0d0a;
+					data_i_trigger <= 1'b1;
+					data_i_cnt <= 10'b0;
+					tx_data_valid <= 1'b0;
+				state <= IDLE;
+				end
+			end else begin
+				state <= PREIDLE;
+			end
+			rx_data_ready <= 1'b0;
+		end
+		SEND:
+		begin
+			if (tx_data_ready & tx_data_valid & data_o_cnt < (size)) begin
+				tx_data <= data_o[((data_o_cnt) * 8)+:8];
+				data_o_cnt <= data_o_cnt + 10'b1;
+			end else if (tx_data_ready & tx_data_valid) begin
+				state <= PREIDLE;
+
+				tx_data_valid <= 1'b0;
+				data_o_cnt <= 10'b0;
+				data_o_ready <= 1'b1;
+			end
+		end
     endcase
     end
     
