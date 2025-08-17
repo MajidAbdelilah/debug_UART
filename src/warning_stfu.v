@@ -120,7 +120,11 @@ module integer_to_str(
 	output reg [(10 * 8 - 1):0] str
 );
 	reg [3:0] index = 0;
+	reg [(10 * 8 - 1):0] str_tmp;
+	
 	integer int_tmp;
+	reg done = 0;
+	
 //	reg [31:0] int_tmp2;
 
 
@@ -128,22 +132,26 @@ module integer_to_str(
 		int_tmp = input_int;
 	end
 
-	always@(posedge clk) begin
+	always@(posedge clk or posedge rst) begin
 		if(rst) begin
-			str = 0;
-			index <= 4'b0; 
-//			int_tmp <= input_int; 
-		end else if(int_tmp) begin
-			str[(index*8)+:8] <= (int_tmp % 32'd10) + 32'd48;
+			str <= 0;
+		end else if({32{clk}} & int_tmp) begin
+			str_tmp[(index)*8+:8] <= (int_tmp % 32'd10) + 32'd48;
 			int_tmp <= int_tmp / 32'd10;
-
+			
 			index <= index + 4'b1;
-		end
- else begin 
-			index <= 4'b0;
-			int_tmp <= input_int;
-			if(!input_int) begin
-				str <= 8'd48;
+		end else if(clk) begin 
+			if(!done) begin
+				str <= {<<8{str_tmp}};
+				done <= 1;
+			end else begin
+				str_tmp <= 0;
+				done <= 0;
+				index <= 4'b0;
+				int_tmp <= input_int;
+				if(!input_int) begin
+					str <= 8'd48;
+				end
 			end
 		end
 	end
